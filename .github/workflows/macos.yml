@@ -257,7 +257,12 @@ jobs:
           PYTHONUSERBASE="${HOME}/python_packages"
           THREADS="$(sysctl -n hw.physicalcpu)"
           WARNING_FLAGS="-DNO_PTHREAD_SELF_USAGE_WARNING=1 -Wno-unused-command-line-argument"
-          CFLAGS="-I${HOMEBREW_PREFIX}/include/ -I${MACPORTS_PREFIX}/include ${WARNING_FLAGS}"
+          # -idirafter, not -I: the catch-all prefixes must not shadow the headers of a
+          # dependency CMake found elsewhere (imported targets are -isystem, searched after
+          # every -I). With -I, /opt/homebrew/include (openssl@4) and /opt/local/include
+          # (MacPorts openssl3 3.6) won over openssl@3 (3.5), whose libcrypto CMake links:
+          # headers >= 3.6 call OPENSSL_sk_set_thunks, which 3.5 does not export.
+          CFLAGS="-idirafter ${HOMEBREW_PREFIX}/include -idirafter ${MACPORTS_PREFIX}/include ${WARNING_FLAGS}"
           CXXFLAGS="${CFLAGS}"
           # brew has an old autoconf-archive -> ax_cxx_compile_stdcxx.m4 version, which cannot detect
           # correctly the c++14 and c++17 support of clang currently, get the latest one from the git repo
@@ -351,6 +356,14 @@ jobs:
             CMAKE_CONFIGURE_FLAGS="${CMAKE_CONFIGURE_FLAGS} -DENABLE_GRPC=OFF"
           fi
           cmake --install-prefix "${SYSLOG_NG_INSTALL_DIR}" -B build . ${CMAKE_CONFIGURE_FLAGS}
+
+      - name: OpenSSL header/library check (diagnostic)
+        if: matrix.build-tool == 'cmake'
+        run: |
+          for d in "${HOMEBREW_PREFIX}/include" "${MACPORTS_PREFIX}/include" "$(brew --prefix openssl@3)/include"; do
+            echo "$d: $(grep -h 'define OPENSSL_VERSION_STR' "$d/openssl/opensslv.h" 2>/dev/null || echo none)"
+          done
+          grep -E 'OPENSSL_(INCLUDE_DIR|CRYPTO_LIBRARY):' build/CMakeCache.txt || true
 
       - name: cmake install
         if: matrix.build-tool == 'cmake'
